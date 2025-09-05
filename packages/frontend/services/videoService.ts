@@ -1,8 +1,9 @@
 // FIX: Import TranscriptSegment, which was previously missing, to resolve type errors.
 import { UploadStatus, VideoDetails, TranscriptSegment } from '@/types';
 
-// Mock service to simulate backend operations
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
+// Mock service to simulate backend operations
 const simulateDelay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 const generateMockTranscript = (duration: number): TranscriptSegment[] => {
@@ -69,7 +70,7 @@ export const uploadVideoFile = async (
     name: file.name,
     duration: duration,
     thumbnailUrl: `https://picsum.photos/seed/${Date.now()}/400/225`,
-    // FIX: Add the 'transcript' property to the returned object to match the updated VideoDetails type. This resolves the error "'transcript' does not exist in type 'VideoDetails'".
+    // FIX: Add the 'transcript' property to the returned object to match the updated VideoDetails type.
     transcript: generateMockTranscript(duration),
   };
 };
@@ -78,34 +79,36 @@ export const importFromYouTube = async (
   url: string,
   onProgress: (progress: number) => void
 ): Promise<VideoDetails> => {
-    console.log(`Starting import from ${url}`);
-
+    console.log(`Starting real import from ${url}`);
+    
+    // Simulate initial phase before hitting the backend
     onProgress(10);
-    await simulateDelay(1000);
-    onProgress(50);
-    await simulateDelay(1500);
-    onProgress(100);
+    await simulateDelay(200);
 
-    // Simulate processing
-    await simulateDelay(2500);
+    const response = await fetch(`${API_BASE_URL}/api/videos/import-youtube`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ url }),
+    });
 
-    if (url.toLowerCase().includes('error')) {
-        throw new Error("Import failed. Invalid YouTube URL or video is private.");
+    onProgress(50); // Backend is processing
+
+    if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to import from YouTube.');
     }
     
-    const duration = 320;
-    return {
-        id: `yt_${Date.now()}`,
-        name: "Imported YouTube Video",
-        duration: duration,
-        thumbnailUrl: `https://picsum.photos/seed/${Date.now()}/400/225`,
-        // FIX: Add the 'transcript' property to the returned object to match the updated VideoDetails type. This resolves the error "'transcript' does not exist in type 'VideoDetails'".
-        transcript: generateMockTranscript(duration),
-    };
+    const videoDetails: VideoDetails = await response.json();
+    
+    onProgress(100); // Done
+    await simulateDelay(500); // Small delay to let the user see 100%
+
+    return videoDetails;
 };
 
 // FIX: Export the findHighlightsInTranscript function to make it available for other modules.
-// This resolves the error "Module '"@/services/videoService"' has no exported member 'findHighlightsInTranscript'".
 export const findHighlightsInTranscript = async (transcript: TranscriptSegment[]): Promise<string[]> => {
     console.log("Finding highlights in transcript...");
     await simulateDelay(2500); // Simulate AI processing time

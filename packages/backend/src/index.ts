@@ -1,14 +1,19 @@
-// Fix: Changed express import to commonjs-style require to resolve middleware type errors.
-import express = require('express');
+// Fix: Changed express import to a default import to resolve module type errors.
+import express from 'express';
 import cors from 'cors';
 import ytdl from 'ytdl-core';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { TranscriptSegment, VideoDetails } from './types';
+import { GoogleGenAI, Type } from "@google/genai";
 
 const app = express();
 const port = process.env.PORT || 3001;
+
+// --- Setup AI ---
+// IMPORTANT: Make sure the API_KEY environment variable is set.
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
 
 // --- Setup Uploads Directory ---
 const uploadsDir = path.join(__dirname, '..', 'uploads');
@@ -40,28 +45,64 @@ const upload = multer({
 });
 
 
-// Mock function to generate a transcript (will be replaced by Whisper later)
-const generateMockTranscript = (duration: number): TranscriptSegment[] => {
-    const transcript: TranscriptSegment[] = [];
-    let currentTime = 0;
-    let id = 0;
-    const sentences = [
-        "Hello everyone and welcome back to the channel.", "Today, we're going to unbox something truly special.", "This is the new gadget everyone has been talking about.", "Let's see what's inside the box.", "First impressions? The packaging is very premium.", "And here it is, the device itself feels incredibly well-built.", "The screen is absolutely gorgeous, with vibrant colors.", "I can't wait to turn this on and test out the performance.", "They say the camera is a huge improvement over the last generation.", "We'll be putting that to the test in just a moment.", "Make sure you subscribe so you don't miss our full review.", "This could be a game-changer for content creators.", "The battery life is also supposed to be excellent.", "What do you guys think? Let me know in the comments below.", "Thanks for watching, and we'll see you in the next one!"
-    ];
+const generateTranscriptWithAI = async (videoName: string, duration: number): Promise<TranscriptSegment[]> => {
+    console.log(`Generating AI transcript for: ${videoName}`);
+    try {
+        const prompt = `
+            You are a highly accurate video transcript generator. Your task is to create a plausible, timed transcript for a video based on its title and duration.
 
-    while (currentTime < duration && id < 50) { // Limit to 50 segments
-        const sentence = sentences[id % sentences.length];
-        const textDuration = Math.max(3, sentence.length / 10);
-        transcript.push({
-            id: `seg_${id++}`,
-            text: sentence,
-            start: currentTime,
-            end: currentTime + textDuration,
+            Video Title: "${videoName}"
+            Total Duration: ${duration} seconds.
+
+            Please generate a transcript with 30 to 50 segments. Each segment should represent a spoken sentence or a clause.
+            The final output MUST be a valid JSON array of objects. Each object must have the following properties: "id", "text", "start", and "end".
+            - "id": A unique string identifier, e.g., "seg_0", "seg_1".
+            - "text": The plausible transcribed text for the segment.
+            - "start": The start time in seconds (float or integer).
+            - "end": The end time in seconds (float or integer).
+
+            Ensure the timestamps are sequential and do not exceed the total video duration. The content of the text should be directly relevant to the video title.
+        `;
+        
+        const responseSchema = {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                id: { type: Type.STRING },
+                text: { type: Type.STRING },
+                start: { type: Type.NUMBER },
+                end: { type: Type.NUMBER },
+              },
+            },
+        };
+
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: responseSchema,
+                temperature: 0.7,
+            },
         });
-        currentTime += textDuration + 0.5;
+
+        const jsonText = response.text.trim();
+        const transcript = JSON.parse(jsonText);
+        console.log("Successfully generated AI transcript.");
+        return transcript;
+
+    } catch (error) {
+        console.error("Error generating AI transcript:", error);
+        // Fallback to a single-segment transcript on error
+        return [{
+            id: 'seg_0',
+            text: `(AI generation failed. Displaying fallback for: ${videoName})`,
+            start: 0,
+            end: duration > 5 ? 5 : duration,
+        }];
     }
-    return transcript;
-}
+};
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -86,14 +127,11 @@ app.post('/api/videos/upload-file', upload.single('video'), async (req, res) => 
             name: req.file.originalname,
             duration: duration,
             thumbnailUrl: `https://picsum.photos/seed/${Date.now()}/400/225`, // Mock thumbnail
-            transcript: generateMockTranscript(duration),
+            transcript: await generateTranscriptWithAI(req.file.originalname, duration),
             source: 'upload',
             videoUrl: videoUrl,
         };
         
-        // Simulate processing time
-        await new Promise(resolve => setTimeout(resolve, 1500));
-
         res.status(200).json(videoDetails);
 
     } catch (error) {
@@ -120,7 +158,7 @@ app.post('/api/videos/import-youtube', async (req, res) => {
             name: info.videoDetails.title,
             duration: duration,
             thumbnailUrl: info.videoDetails.thumbnails[info.videoDetails.thumbnails.length - 1].url, // Get highest quality thumbnail
-            transcript: generateMockTranscript(duration),
+            transcript: await generateTranscriptWithAI(info.videoDetails.title, duration),
             source: 'youtube',
         };
 

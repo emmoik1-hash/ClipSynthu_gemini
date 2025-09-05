@@ -75,23 +75,23 @@ export const importFromYouTube = async (
 
 // FIX: Export the findHighlightsInTranscript function to make it available for other modules.
 export const findHighlightsInTranscript = async (transcript: TranscriptSegment[]): Promise<string[]> => {
-    console.log("Finding highlights in transcript...");
-    await simulateDelay(2500); // Simulate AI processing time
+    console.log("Calling backend to find AI-powered highlights...");
 
-    // Simulate finding a few key segments
-    const highlights = new Set<string>();
-    const potentialHooks = ["special", "game-changer", "improvement", "gorgeous"];
-    
-    transcript.forEach(segment => {
-        if (potentialHooks.some(hook => segment.text.toLowerCase().includes(hook))) {
-            highlights.add(segment.id);
-        }
+    const response = await fetch(`${API_BASE_URL}/api/highlights/find`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ transcript }),
     });
 
-    if (highlights.size === 0 && transcript.length > 2) {
-        highlights.add(transcript[1].id); // Fallback to the second segment
+    if (!response.ok) {
+        const errorData = await response.json();
+        console.error("Failed to find highlights from backend:", errorData);
+        throw new Error(errorData.error || 'Failed to analyze transcript for highlights.');
     }
 
-    console.log("Found highlights:", Array.from(highlights));
-    return Array.from(highlights);
+    const { highlightIds } = await response.json();
+    console.log("Received AI-powered highlights:", highlightIds);
+    return highlightIds;
 }

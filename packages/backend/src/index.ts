@@ -1,5 +1,6 @@
 // Fix: Changed express import to a default import to resolve module type errors.
-import express from 'express';
+// Fix: Added explicit types for Application, Request, and Response to fix handler overload errors.
+import express, { Application, Request, Response } from 'express';
 import cors from 'cors';
 import ytdl from 'ytdl-core';
 import multer from 'multer';
@@ -8,7 +9,7 @@ import fs from 'fs';
 import { TranscriptSegment, VideoDetails } from './types';
 import { GoogleGenAI, Type } from "@google/genai";
 
-const app = express();
+const app: Application = express();
 const port = process.env.PORT || 3001;
 
 // --- Setup AI ---
@@ -23,7 +24,7 @@ if (!fs.existsSync(uploadsDir)) {
 
 // Middlewares
 app.use(cors()); // Allow cross-origin requests from the frontend
-app.use(express.json()); // Parse JSON bodies
+app.use(express.json({ limit: '10mb' })); // Parse JSON bodies, increase limit for large transcripts
 
 // Serve static video files
 app.use('/uploads', express.static(uploadsDir));
@@ -74,6 +75,7 @@ const generateTranscriptWithAI = async (videoName: string, duration: number): Pr
                 start: { type: Type.NUMBER },
                 end: { type: Type.NUMBER },
               },
+              required: ["id", "text", "start", "end"],
             },
         };
 
@@ -104,13 +106,60 @@ const generateTranscriptWithAI = async (videoName: string, duration: number): Pr
     }
 };
 
+const findHighlightsWithAI = async (transcript: TranscriptSegment[]): Promise<string[]> => {
+    console.log("Finding hooks in transcript with AI...");
+    try {
+        const prompt = `
+            You are an expert viral video producer for platforms like TikTok, Reels, and YouTube Shorts. Your task is to analyze a video transcript and identify the segments that would make the most compelling "hooks" to capture a viewer's attention.
+
+            A great hook is typically:
+            - A surprising statement or question.
+            - A controversial opinion.
+            - The beginning of a story (e.g., "This is how I...").
+            - A statement that promises a valuable outcome or solution.
+            - Something emotionally charged or highly energetic.
+
+            Here is the transcript:
+            ${JSON.stringify(transcript)}
+
+            Based on this transcript, please identify the top 3-5 most hook-worthy segments. Your response MUST be a valid JSON array containing only the string IDs of the selected segments.
+            Example format: ["seg_5", "seg_12", "seg_28"]
+        `;
+
+        const responseSchema = {
+            type: Type.ARRAY,
+            items: { type: Type.STRING }
+        };
+
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: responseSchema,
+                temperature: 0.5,
+            },
+        });
+
+        const jsonText = response.text.trim();
+        const highlightIds = JSON.parse(jsonText);
+        console.log("Successfully found AI highlights:", highlightIds);
+        return highlightIds;
+
+    } catch (error) {
+        console.error("Error finding highlights with AI:", error);
+        // Fallback to returning an empty array on error
+        return [];
+    }
+};
+
 // Health check endpoint
-app.get('/api/health', (req, res) => {
+app.get('/api/health', (req: Request, res: Response) => {
   res.json({ status: 'ok', message: 'ClipSynth backend is running!' });
 });
 
 // File Upload endpoint
-app.post('/api/videos/upload-file', upload.single('video'), async (req, res) => {
+app.post('/api/videos/upload-file', upload.single('video'), async (req: Request, res: Response) => {
     if (!req.file) {
         return res.status(400).json({ error: 'No video file provided.' });
     }
@@ -142,7 +191,7 @@ app.post('/api/videos/upload-file', upload.single('video'), async (req, res) => 
 
 
 // YouTube import endpoint
-app.post('/api/videos/import-youtube', async (req, res) => {
+app.post('/api/videos/import-youtube', async (req: Request, res: Response) => {
     const { url } = req.body;
 
     if (!url || !ytdl.validateURL(url)) {
@@ -167,6 +216,23 @@ app.post('/api/videos/import-youtube', async (req, res) => {
     } catch (error) {
         console.error('Failed to fetch YouTube video info:', error);
         res.status(500).json({ error: 'Failed to process YouTube URL. The video might be private or unavailable.' });
+    }
+});
+
+// Find Highlights endpoint
+app.post('/api/highlights/find', async (req: Request, res: Response) => {
+    const { transcript } = req.body;
+
+    if (!transcript || !Array.isArray(transcript) || transcript.length === 0) {
+        return res.status(400).json({ error: 'Valid transcript data is required.' });
+    }
+
+    try {
+        const highlightIds = await findHighlightsWithAI(transcript);
+        res.status(200).json({ highlightIds });
+    } catch (error) {
+        console.error('Failed to find highlights:', error);
+        res.status(500).json({ error: 'An internal error occurred while analyzing for highlights.' });
     }
 });
 

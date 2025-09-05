@@ -1,23 +1,44 @@
-// Fix: Changed express import to resolve type errors with middleware.
-import express from 'express';
+// Fix: Changed express import to commonjs-style require to resolve middleware type errors.
+import express = require('express');
 import cors from 'cors';
 import ytdl from 'ytdl-core';
 import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
 import { TranscriptSegment, VideoDetails } from './types';
 
 const app = express();
 const port = process.env.PORT || 3001;
 
+// --- Setup Uploads Directory ---
+const uploadsDir = path.join(__dirname, '..', 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+    fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
 // Middlewares
 app.use(cors()); // Allow cross-origin requests from the frontend
-// Fix: Use express.json() for parsing JSON bodies. This resolves a type error with app.use().
 app.use(express.json()); // Parse JSON bodies
 
+// Serve static video files
+app.use('/uploads', express.static(uploadsDir));
+
 // Multer setup for file uploads
-const upload = multer({ 
-    storage: multer.memoryStorage(), // Use memory storage for simplicity for now
-    limits: { fileSize: 2 * 1024 * 1024 * 1024 } // 2GB limit, matching frontend text
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        cb(null, uploadsDir)
+    },
+    filename: function (req, file, cb) {
+        // Create a unique filename to avoid conflicts
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9)
+        cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname))
+    }
 });
+const upload = multer({ 
+    storage: storage, 
+    limits: { fileSize: 2 * 1024 * 1024 * 1024 } // 2GB limit
+});
+
 
 // Mock function to generate a transcript (will be replaced by Whisper later)
 const generateMockTranscript = (duration: number): TranscriptSegment[] => {
@@ -58,16 +79,20 @@ app.post('/api/videos/upload-file', upload.single('video'), async (req, res) => 
         // For now, we'll mock it.
         const duration = 245; // Mock duration in seconds
 
+        const videoUrl = `${req.protocol}://${req.get('host')}/uploads/${req.file.filename}`;
+
         const videoDetails: VideoDetails = {
             id: `vid_${Date.now()}`,
             name: req.file.originalname,
             duration: duration,
             thumbnailUrl: `https://picsum.photos/seed/${Date.now()}/400/225`, // Mock thumbnail
             transcript: generateMockTranscript(duration),
+            source: 'upload',
+            videoUrl: videoUrl,
         };
         
         // Simulate processing time
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise(resolve => setTimeout(resolve, 1500));
 
         res.status(200).json(videoDetails);
 
@@ -96,6 +121,7 @@ app.post('/api/videos/import-youtube', async (req, res) => {
             duration: duration,
             thumbnailUrl: info.videoDetails.thumbnails[info.videoDetails.thumbnails.length - 1].url, // Get highest quality thumbnail
             transcript: generateMockTranscript(duration),
+            source: 'youtube',
         };
 
         res.status(200).json(videoDetails);

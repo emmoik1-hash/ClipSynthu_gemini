@@ -21,4 +21,6 @@ export interface VideoDetails {
   thumbnailUrl: string;
   // FIX: Add transcript property to include transcript data with video details.
   transcript: TranscriptSegment[];
+  source: 'upload' | 'youtube';
+  videoUrl?: string;
 }

@@ -11,4 +11,6 @@ export interface VideoDetails {
   duration: number; // in seconds
   thumbnailUrl: string;
   transcript: TranscriptSegment[];
+  source: 'upload' | 'youtube';
+  videoUrl?: string; // URL for the playable video file for uploaded content
 }
